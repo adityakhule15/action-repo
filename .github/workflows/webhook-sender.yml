@@ -26,7 +26,7 @@ jobs:
       
       - name: Send Webhook
         env:
-          WEBHOOK_URL: "http://your-server-ip:5000/webhook"
+          WEBHOOK_URL: "https://webhook-repo-aditya.onrender.com/webhook"
         run: |
           curl -X POST \
             -H "Content-Type: application/json" \
