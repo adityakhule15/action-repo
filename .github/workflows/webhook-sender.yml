@@ -1,0 +1,45 @@
+name: Send Webhook on Repository Events
+
+on:
+  push:
+    branches: ['*']
+  pull_request:
+    types: [opened, synchronize, reopened]
+  pull_request_target:
+    types: [closed]
+
+jobs:
+  send-webhook:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Determine event type
+        id: event-type
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "event_type=push"
+          elif [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ github.event.action }}" = "opened" ]; then
+            echo "event_type=pull_request"
+          elif [ "${{ github.event_name }}" = "pull_request_target" ] && [ "${{ github.event.pull_request.merged }}" = "true" ]; then
+            echo "event_type=merge"
+          fi
+      
+      - name: Send Webhook
+        env:
+          WEBHOOK_URL: "http://your-server-ip:5000/webhook"
+        run: |
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -d '{
+              "event_type": "${{ steps.event-type.outputs.event_type }}",
+              "author": "${{ github.actor }}",
+              "from_branch": "${{ github.ref_name }}",
+              "to_branch": "${{ github.ref_name }}",
+              "timestamp": "${{ github.event.head_commit.timestamp }}",
+              "repository": "${{ github.repository }}",
+              "commit_id": "${{ github.sha }}",
+              "title": "${{ github.event.head_commit.message }}"
+            }' \
+            "$WEBHOOK_URL"
+
+            
