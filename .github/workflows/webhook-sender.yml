@@ -1,4 +1,4 @@
-name: Send Webhook on Repository Events
+name: GitHub Webhook Events
 
 on:
   push:
@@ -9,95 +9,101 @@ on:
 jobs:
   send-webhook:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Prepare webhook data
-        id: prepare
+      - name: Send Webhook for Push, PR, or Merge
         run: |
-          # Default values
-          EVENT_TYPE="push"
+          # YOUR RENDER APP URL
+          WEBHOOK_URL="https://webhook-repo-aditya.onrender.com/webhook"
+          
+          echo "========================================"
+          echo "GITHUB WEBHOOK SENDER"
+          echo "========================================"
+          
+          # DETERMINE EXACT EVENT TYPE
+          EVENT_TYPE="unknown"
           FROM_BRANCH=""
           TO_BRANCH=""
           TIMESTAMP=""
           TITLE=""
           
+          # 1. PUSH EVENT
           if [ "${{ github.event_name }}" = "push" ]; then
             EVENT_TYPE="push"
             FROM_BRANCH="${{ github.ref_name }}"
             TO_BRANCH="${{ github.ref_name }}"
             TIMESTAMP="${{ github.event.head_commit.timestamp }}"
             TITLE="${{ github.event.head_commit.message }}"
+            echo "📤 Event: PUSH to $TO_BRANCH"
             
-          elif [ "${{ github.event_name }}" = "pull_request" ]; then
-            if [ "${{ github.event.action }}" = "opened" ]; then
-              EVENT_TYPE="pull_request"
-            elif [ "${{ github.event.action }}" = "closed" ] && [ "${{ github.event.pull_request.merged }}" = "true" ]; then
-              EVENT_TYPE="merge"
-            else
-              echo "❌ Skipping - not a tracked PR event"
-              exit 0
-            fi
-            
+          # 2. PULL REQUEST OPENED EVENT
+          elif [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ github.event.action }}" = "opened" ]; then
+            EVENT_TYPE="pull_request"
             FROM_BRANCH="${{ github.event.pull_request.head.ref }}"
             TO_BRANCH="${{ github.event.pull_request.base.ref }}"
-            
-            if [ "${{ github.event.action }}" = "opened" ]; then
-              TIMESTAMP="${{ github.event.pull_request.created_at }}"
-            else
-              TIMESTAMP="${{ github.event.pull_request.merged_at }}"
-            fi
-            
+            TIMESTAMP="${{ github.event.pull_request.created_at }}"
             TITLE="${{ github.event.pull_request.title }}"
+            echo "📤 Event: PULL REQUEST from $FROM_BRANCH to $TO_BRANCH"
+            
+          # 3. MERGE EVENT (PR closed and merged)
+          elif [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ github.event.action }}" = "closed" ] && [ "${{ github.event.pull_request.merged }}" = "true" ]; then
+            EVENT_TYPE="merge"
+            FROM_BRANCH="${{ github.event.pull_request.head.ref }}"
+            TO_BRANCH="${{ github.event.pull_request.base.ref }}"
+            TIMESTAMP="${{ github.event.pull_request.merged_at }}"
+            TITLE="${{ github.event.pull_request.title }}"
+            echo "📤 Event: MERGE from $FROM_BRANCH to $TO_BRANCH"
+            
+          else
+            echo "⏭️ Skipping: ${{ github.event_name }} / ${{ github.event.action }}"
+            echo "Not Push, Pull Request, or Merge"
+            exit 0
           fi
           
-          # Set outputs
-          echo "event_type=$EVENT_TYPE" >> $GITHUB_OUTPUT
-          echo "from_branch=$FROM_BRANCH" >> $GITHUB_OUTPUT
-          echo "to_branch=$TO_BRANCH" >> $GITHUB_OUTPUT
-          echo "timestamp=$TIMESTAMP" >> $GITHUB_OUTPUT
-          echo "title=$TITLE" >> $GITHUB_OUTPUT
+          # USE CURRENT TIME IF TIMESTAMP IS EMPTY
+          if [ -z "$TIMESTAMP" ]; then
+            TIMESTAMP=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          fi
           
-          echo "✅ Prepared: $EVENT_TYPE from $FROM_BRANCH to $TO_BRANCH"
-
-      - name: Send Webhook
-        env:
-          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
-        run: |
-          # Test if URL is accessible
-          echo "Testing connection to: $WEBHOOK_URL"
-          curl -I -X GET "$WEBHOOK_URL" || true
+          # CREATE PAYLOAD
+          PAYLOAD=$(cat << EOF
+          {
+            "event_type": "$EVENT_TYPE",
+            "author": "${{ github.actor }}",
+            "from_branch": "$FROM_BRANCH",
+            "to_branch": "$TO_BRANCH",
+            "timestamp": "$TIMESTAMP",
+            "repository": "${{ github.repository }}",
+            "commit_id": "${{ github.sha }}",
+            "title": "$TITLE",
+            "action": "${{ github.event.action }}"
+          }
+          EOF
+          )
           
-          # Create payload
-          PAYLOAD=$(jq -n \
-            --arg event_type "${{ steps.prepare.outputs.event_type }}" \
-            --arg author "${{ github.actor }}" \
-            --arg from_branch "${{ steps.prepare.outputs.from_branch }}" \
-            --arg to_branch "${{ steps.prepare.outputs.to_branch }}" \
-            --arg timestamp "${{ steps.prepare.outputs.timestamp }}" \
-            --arg repository "${{ github.repository }}" \
-            --arg commit_id "${{ github.sha }}" \
-            --arg title "${{ steps.prepare.outputs.title }}" \
-            '{
-              event_type: $event_type,
-              author: $author,
-              from_branch: $from_branch,
-              to_branch: $to_branch,
-              timestamp: $timestamp,
-              repository: $repository,
-              commit_id: $commit_id,
-              title: $title
-            }')
-          
-          echo "Sending payload:"
+          echo "📦 Payload:"
           echo "$PAYLOAD"
+          echo ""
           
-          # Send webhook
-          curl -v -X POST \
+          # SEND WEBHOOK
+          echo "🌐 Sending to: $WEBHOOK_URL"
+          RESPONSE=$(curl -s -o response.txt -w "%{http_code}" -X POST \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD" \
-            "$WEBHOOK_URL"
+            "$WEBHOOK_URL")
           
-          echo "✅ Webhook sent!"
+          echo "📥 HTTP Status: $RESPONSE"
+          
+          if [ -f "response.txt" ]; then
+            echo "📥 Response:"
+            cat response.txt
+          fi
+          
+          if [ "$RESPONSE" = "200" ]; then
+            echo "✅ SUCCESS! Event sent to your dashboard"
+            echo "👉 Check: https://webhook-repo-aditya.onrender.com"
+          else
+            echo "❌ ERROR: Failed to send webhook"
+            exit 1
+          fi
+          
+          echo "========================================"
